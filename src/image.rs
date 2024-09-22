@@ -171,9 +171,13 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
         let json: Value = serde_json::from_str(&content)?;
 
         let diff_id_array = json.as_array().unwrap();
-        if diff_id_array.len() > 1 {
+        /* there is often more than one entry in that file.
+            it seems it's always the same digest in all those entreis
+            there is a HMAC which is different though
+        */
+        /* if diff_id_array.len() > 1 {
             println!("more that one entry in {}", entry.path().to_str().unwrap());
-        }
+        } */
         if let Some(sha_digest) = diff_id_array.get(0).unwrap().get("Digest") {
             let digest = sha_digest.as_str().unwrap_or_default().trim_start_matches("sha256:");
             let image_layer_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(DiffIdNode {
