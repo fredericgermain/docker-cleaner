@@ -105,7 +105,7 @@ fn show_category_details(s: &mut Cursive, category: &str, classified: Arc<HashMa
                 .iter()
                 .filter(|node_ref| {
                     let node = node_ref.borrow();
-                    node.used_count() == 0
+                    node.rdeps().len() == 0
                 })
                 .cloned() //  .map(Rc::clone)
                 .collect()
@@ -144,7 +144,7 @@ fn show_node_details(s: &mut Cursive, node_id: String) {
         let details = format!(
             "ID: {}\nUsed Count: {}\nDependencies: {}",
             node.id(),
-            node.used_count(),
+            node.rdeps().len(),
             node.deps().len()
         );
 

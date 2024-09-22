@@ -10,7 +10,7 @@ use crate::node::{Node, MissingNode};
 pub struct ContainerNode {
     container_id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
     path: PathBuf,
 }
 
@@ -27,12 +27,12 @@ impl Node for ContainerNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -48,7 +48,7 @@ impl Node for ContainerNode {
 pub struct MountNode {
     mount_id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
     path: PathBuf,
 }
 
@@ -65,12 +65,12 @@ impl Node for MountNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -94,7 +94,7 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
         let mount_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MountNode {
             mount_id: mount_id.clone(),
             deps: Vec::new(),
-            used_count: 1,
+            rdeps: Vec::new(),
             path: mount_path.clone(),
         }));
 
@@ -106,12 +106,14 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
                 let overlay_id = format!("Overlay2:{}", layer_id);
                 if let Some(overlay_node) = graph.get(&overlay_id) {
                     mount_node.borrow_mut().deps_mut().push(Rc::clone(overlay_node));
-                    overlay_node.borrow_mut().inc_used_count(1);
+                    overlay_node.borrow_mut().rdeps_mut().push(Rc::clone(&mount_node));
                 } else {
+                    let mut rdeps = Vec::new();
+                    rdeps.push(Rc::clone(&mount_node));
                     let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
                         id: overlay_id.clone(),
                         deps: Vec::new(),
-                        used_count: 1,
+                        rdeps,
                     }));
                     mount_node.borrow_mut().deps_mut().push(Rc::clone(&missing_node));
                     graph.insert(overlay_id, missing_node);
@@ -136,36 +138,46 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
         match config {
             Ok(config) => {
                 let image_id = config["Image"].as_str().unwrap_or("").trim_start_matches("sha256:");
-                let mut deps = Vec::new();
+
+                let container_node = Rc::new(RefCell::new(ContainerNode {
+                    container_id: container_id.clone(),
+                    deps: Vec::new(),
+                    rdeps: Vec::new(),
+                    path: entry.path(),
+                }));
     
                 // Add dependency on the image content
                 let image_content_id = format!("ImageContent:{}", image_id);
                 if let Some(image_node) = graph.get(&image_content_id) {
-                    deps.push(Rc::clone(image_node));
-                    image_node.borrow_mut().inc_used_count(1);
+                    container_node.borrow_mut().deps.push(Rc::clone(image_node));
+                    container_node.borrow_mut().rdeps.push(Rc::clone(&container_node) as Rc<RefCell<dyn Node + 'static>>);
                 } else {
+                    let mut rdeps: Vec<Rc<RefCell<dyn Node>>> = Vec::new();
+                    rdeps.push(Rc::clone(&container_node) as Rc<RefCell<dyn Node + 'static>>);
                     let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
                         id: image_content_id.clone(),
                         deps: Vec::new(),
-                        used_count: 1,
+                        rdeps,
                     }));
-                    deps.push(Rc::clone(&missing_node));
+                    container_node.borrow_mut().deps.push(Rc::clone(&missing_node));
                     graph.insert(image_content_id, missing_node);
                 }
     
                 let mount_id = format!("Mount:{}", container_id);
                 match graph.get(&mount_id) {
                     Some(node) => {
-                        deps.push(node.clone());
-                        node.borrow_mut().inc_used_count(1);
+                        container_node.borrow_mut().deps.push(node.clone());
+                        node.borrow_mut().rdeps_mut().push(Rc::clone(&container_node) as Rc<RefCell<dyn Node + 'static>>);
                     }
                     None => {
+                        let mut rdeps: Vec<Rc<RefCell<dyn Node>>> = Vec::new();
+                        rdeps.push(Rc::clone(&container_node) as Rc<RefCell<dyn Node + 'static>>);
                         let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
                             id: mount_id.clone(),
                             deps: Vec::new(),
-                            used_count: 1,
+                            rdeps,
                         }));
-                        deps.push(Rc::clone(&missing_node));
+                        container_node.borrow_mut().deps.push(Rc::clone(&missing_node));
                         let missing_node_id = missing_node.borrow().id();
                         graph.insert(missing_node_id, missing_node);
     
@@ -180,22 +192,16 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
                         let layer_id = fs::read_to_string(layer_path)?.trim().to_string();
                         let overlay_id = format!("Overlay2:{}", layer_id);
                         if let Some(overlay_node) = graph.get(&overlay_id) {
-                            deps.push(Rc::clone(overlay_node));
-                            overlay_node.borrow_mut().inc_used_count(1);
+                            container_node.borrow_mut().deps.push(Rc::clone(overlay_node));
+                            overlay_node.borrow_mut().rdeps_mut().push(Rc::clone(&container_node) as Rc<RefCell<dyn Node + 'static>>);
                         } else {
                         }
                     }
                 }
     
-                let container_node = Rc::new(RefCell::new(ContainerNode {
-                    container_id: container_id.clone(),
-                    deps,
-                    used_count: 0,
-                    path: entry.path(),
-                }));
                 graph.insert(format!("Container:{}", container_id), container_node);    
             },
-            Err(error) => { println!("could not parse {}", config_path.to_str().unwrap_or_default())}
+            Err(error) => { println!("could not parse {} {}", config_path.to_str().unwrap_or_default(), error)}
         }
     }
 

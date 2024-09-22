@@ -6,8 +6,8 @@ pub trait Node {
     fn id(&self) -> String;
     fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>>;
     fn deps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>>;
-    fn used_count(&self) -> usize;
-    fn inc_used_count(&mut self, count: isize);
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>>;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>>;
     fn as_any(&self) -> &dyn Any;
     fn delete(&self) -> anyhow::Result<()>;
 }
@@ -21,18 +21,11 @@ pub enum NodeErr {
 pub struct MissingNode {
     pub id: String,
     pub deps: Vec<Rc<RefCell<dyn Node>>>,
-    pub used_count: usize,
+    pub rdeps: Vec<Rc<RefCell<dyn Node>>>,
 }
 
 
 impl MissingNode {
-    pub fn new(id: String, used_count: usize) -> Self {
-        MissingNode {
-            id,
-            deps: Vec::new(),
-            used_count,
-        }
-    }
 }
 
 impl Node for MissingNode {
@@ -49,14 +42,13 @@ impl Node for MissingNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
-
     fn as_any(&self) -> &dyn Any {
         self
     }

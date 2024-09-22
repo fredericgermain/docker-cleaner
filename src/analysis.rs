@@ -41,8 +41,8 @@ pub fn remove_node(graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>, node_id: 
             if recursive {
                 for dep in node.borrow().deps() {
                     let dep_id = dep.borrow().id();
-                    dep.borrow_mut().inc_used_count(-1);
-                    if dep.borrow().used_count() == 0 {
+                    dep.borrow_mut().rdeps_mut().retain(|node| node.borrow().id() != dep_id);
+                    if dep.borrow().rdeps().len() == 0 {
                         to_remove.push_back(dep_id);
                     }
                 }

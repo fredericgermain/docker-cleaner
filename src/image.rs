@@ -11,7 +11,7 @@ pub struct ImageLayerNode {
     image_id: String,
  //   layer_id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
     path: PathBuf,
 }
 
@@ -28,12 +28,12 @@ impl Node for ImageLayerNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -48,7 +48,7 @@ impl Node for ImageLayerNode {
 pub struct ImageContentNode {
     image_id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
     path: PathBuf,
 }
 
@@ -65,12 +65,12 @@ impl Node for ImageContentNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -82,10 +82,11 @@ impl Node for ImageContentNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct DiffIdNode {
     id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
     digest: String,
     source_repository: Option<String>,
 }
@@ -103,12 +104,12 @@ impl Node for DiffIdNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -123,7 +124,7 @@ impl Node for DiffIdNode {
 pub struct ImageRepoNode {
     name_tag: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
 }
 
 impl Node for ImageRepoNode {
@@ -139,12 +140,12 @@ impl Node for ImageRepoNode {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -184,7 +185,7 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
                 id: diff_id.clone(),
        //        layer_id: layer_id.clone(),
                 deps: Vec::new(),
-                used_count: 0,
+                rdeps: Vec::new(),
                 digest: digest.to_string(),
                 source_repository: Some(json["SourceRepository"].as_str().unwrap_or("").to_string()),
             }));
@@ -201,24 +202,26 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
         let cache_id_path = entry.path().join("cache-id");
        
         let cache_overlay_id = fs::read_to_string(cache_id_path)?.trim().to_string();
-         let image_layer_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(ImageLayerNode {
+        let image_layer_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(ImageLayerNode {
             image_id: layer_id.clone(),
    //        layer_id: layer_id.clone(),
             deps: Vec::new(),
-            used_count: 0,
+            rdeps: Vec::new(),
             path: entry.path(),
         }));
         let overlay2_id = format!("Overlay2:{}", cache_overlay_id);
         match graph.get(&overlay2_id) {
             Some(node) => {
                 image_layer_node.borrow_mut().deps_mut().push(Rc::clone(node));
-                node.borrow_mut().inc_used_count(1);
+                node.borrow_mut().rdeps_mut().push(Rc::clone(&image_layer_node));
             }
             None => {
+                let mut rdeps = Vec::new();
+                rdeps.push(Rc::clone(&image_layer_node));
                 let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
                     id: overlay2_id,
                     deps: Vec::new(),
-                    used_count: 1,
+                    rdeps,
                 }));
                 image_layer_node.borrow_mut().deps_mut().push(Rc::clone(&missing_node));
                 let id_missing = missing_node.borrow().id();
@@ -233,14 +236,14 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
             id: digest.to_string(),
    //        layer_id: layer_id.clone(),
             deps: Vec::new(),
-            used_count: 0,
+            rdeps: Vec::new(),
             digest: digest.to_string(),
             source_repository: None,
         }));
         let overlay2_id = format!("DiffId:{}", digest);
 
         diffid_node.borrow_mut().deps_mut().push(Rc::clone(&image_layer_node));
-        image_layer_node.borrow_mut().inc_used_count(1);
+        image_layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&diffid_node));
 
         graph.insert(overlay2_id, diffid_node);
         graph.insert(format!("ImageLayer:{}", layer_id), image_layer_node);
@@ -256,29 +259,30 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
         if let Some(rootfs) = json.get("rootfs") {
             if let Some(diff_ids) = rootfs.get("diff_ids") {
                 if let Some(diff_ids) = diff_ids.as_array() {
-                    let mut deps = Vec::new();
+                    let node = Rc::new(RefCell::new(ImageContentNode {
+                        image_id: image_id.clone(),
+                        deps: Vec::new(),
+                        rdeps: Vec::new(),
+                        path: entry.path(),
+                    }));
                     for diff_id in diff_ids {
                         let layer_diff_id = diff_id.as_str().unwrap_or("").trim_start_matches("sha256:");
                         let layer_node_id = format!("DiffId:{}", layer_diff_id);
                         if let Some(layer_node) = graph.get(&layer_node_id) {
-                            deps.push(Rc::clone(layer_node));
-                            layer_node.borrow_mut().inc_used_count(1);
+                            node.borrow_mut().deps.push(Rc::clone(layer_node));
+                            layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&node) as Rc<RefCell<dyn Node>>);
                         } else {
+                            let mut rdeps: Vec<Rc<RefCell<dyn Node>>> = Vec::new();
+                            rdeps.push(Rc::clone(&node) as Rc<RefCell<dyn Node>>);
                             let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
                                 id: layer_node_id.clone(),
                                 deps: Vec::new(),
-                                used_count: 1,
+                                rdeps,
                             }));
-                            deps.push(Rc::clone(&missing_node));
+                            node.borrow_mut().deps.push(Rc::clone(&missing_node));
                             graph.insert(layer_node_id, missing_node);
                         }
                     }
-                    let node = Rc::new(RefCell::new(ImageContentNode {
-                        image_id: image_id.clone(),
-                        deps,
-                        used_count: 0,
-                        path: entry.path(),
-                    }));
                     graph.insert(format!("ImageContent:{}", image_id), node);
                 }
             }
@@ -293,9 +297,9 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
             let node = Rc::new(RefCell::new(ImageRepoNode {
                 name_tag: name_tag.clone(),
                 deps: vec![Rc::clone(content_node)],
-                used_count: 0,
+                rdeps: Vec::new(),
             }));
-            content_node.borrow_mut().inc_used_count(1);
+            content_node.borrow_mut().rdeps_mut().push(Rc::clone(&node) as Rc<RefCell<dyn Node>>);
             graph.insert(format!("ImageRepo:{}", name_tag), node);
         }
     }

@@ -10,7 +10,7 @@ pub struct Overlay2Node {
     id: String,
   //  short_link: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
-    used_count: usize,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
     path: PathBuf,
 }
 
@@ -27,12 +27,12 @@ impl Node for Overlay2Node {
         &mut self.deps
     }
 
-    fn used_count(&self) -> usize {
-        self.used_count
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
     }
 
-    fn inc_used_count(&mut self, count: isize) {
-        self.used_count = (self.used_count as isize + count) as usize;
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -62,12 +62,11 @@ pub fn analyze_overlay2(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell
                 layer_map_id_to_short_link.insert(id.clone(), short_link.clone());
                 layer_map_short_link_to_id.insert(short_link.clone(), id);
 
-                let mut deps = Vec::new();
                 let node = Rc::new(RefCell::new(Overlay2Node {
                     id: overlay2_id.clone(),
             //        short_link,
-                    deps,
-                    used_count: 0,
+                    deps: Vec::new(),
+                    rdeps: Vec::new(),
                     path,
                 }));
                 graph.insert(overlay2_id, node);
@@ -76,37 +75,39 @@ pub fn analyze_overlay2(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell
     }
 
     // Step 2: Build the graph
-    for (id, short_link) in &layer_map_id_to_short_link {
+    for (id, _short_link) in &layer_map_id_to_short_link {
         let overlay2_id = format!("Overlay2:{}", id); 
-        let node = if let Some(node) = graph.get(&overlay2_id) {
-            Rc::clone(node)
-        } else {
-            continue;
+        let node = match graph.get(&overlay2_id).map(Rc::clone) {
+            Some(node) => node,
+            None => continue,
         };
-            let path = overlay2_path.join(&id);
-            let lower_path = path.join("lower");
 
-            if lower_path.exists() {
-                let lower_content = fs::read_to_string(lower_path)?;
-                for lower_short_link in lower_content.split(':') {
-                    let lower_short_id = lower_short_link.trim_start_matches("l/").to_string();
-                    if let Some(lower_id) = layer_map_short_link_to_id.get(&lower_short_id) {
-                        let lower_node_id = format!("Overlay2:{}", lower_id);
-                        if let Some(lower_node) = graph.get(&lower_node_id) {
-                            (*node).borrow_mut().deps_mut().push(Rc::clone(lower_node));
-                            (**lower_node).borrow_mut().inc_used_count(1);
-                        } else {
-                            let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
-                                id: lower_id.clone(),
-                                deps: Vec::new(),
-                                used_count: 1,
-                            }));
-                            (*node).borrow_mut().deps_mut().push(Rc::clone(&missing_node));
-                            graph.insert(lower_node_id, missing_node);
-                        }
+        let path = overlay2_path.join(&id);
+        let lower_path = path.join("lower");
+
+        if lower_path.exists() {
+            let lower_content = fs::read_to_string(lower_path)?;
+            for lower_short_link in lower_content.split(':') {
+                let lower_short_id = lower_short_link.trim_start_matches("l/").to_string();
+                if let Some(lower_id) = layer_map_short_link_to_id.get(&lower_short_id) {
+                    let lower_node_id = format!("Overlay2:{}", lower_id);
+                    if let Some(lower_node) = graph.get(&lower_node_id) {
+                        (*node).borrow_mut().deps_mut().push(Rc::clone(lower_node));
+                        (**lower_node).borrow_mut().rdeps_mut().push(Rc::clone(&node));
+                    } else {
+                        let mut rdeps = Vec::new();
+                        rdeps.push(Rc::clone(&node));
+                        let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
+                            id: lower_id.clone(),
+                            deps: Vec::new(),
+                            rdeps,
+                        }));
+                        (*node).borrow_mut().deps_mut().push(Rc::clone(&missing_node));
+                        graph.insert(lower_node_id, missing_node);
                     }
                 }
             }
+        }
     }
 
     Ok(())
