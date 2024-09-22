@@ -24,12 +24,12 @@ fn main() -> anyhow::Result<()> {
         .get_matches();
 
     let base_path = PathBuf::from(matches.get_one::<String>("base").unwrap());
-    let delete_mode = matches.contains_id("delete");
-    let dry_run = matches.contains_id("dry-run");
+   // let delete_mode = matches.contains_id("delete");
+   // let dry_run = matches.contains_id("dry-run");
 
     let graph = analysis::build_graph(&base_path)?;
     
-    ui::run_ui(graph, delete_mode, dry_run)?;
+    ui::run_ui(graph)?;
 
     Ok(())
 }

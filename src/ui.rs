@@ -17,7 +17,7 @@ struct UiMainNode {
 static UPPER_NODES: &[UiMainNode] = &[
     UiMainNode { desc: "Images", node_type: "ImageRepo" },
     UiMainNode { desc: "Containers", node_type: "Container" },
-    UiMainNode { desc: "Volumes", node_type: "Mount" },
+    //UiMainNode { desc: "Volumes", node_type: "Mount" },
    // UiMainNode { desc: "Networks", node_type: "network" },
 ];
 
@@ -27,11 +27,12 @@ static DANDLING_NODES: &[UiMainNode] = &[
     UiMainNode { desc: "ImageContent", node_type: "ImageContent" },
     UiMainNode { desc: "ImageLayer", node_type: "ImageLayer" },
     UiMainNode { desc: "Overlay2", node_type: "Overlay2" },
-    UiMainNode { desc: "Images", node_type: "ImageRepo" },
     UiMainNode { desc: "Volumes", node_type: "Mount" },
+
+    UiMainNode { desc: "Images", node_type: "ImageRepo" },
 ];
 
-pub fn run_ui(mut graph: HashMap<String, Rc<RefCell<dyn Node>>>, delete_mode: bool, dry_run: bool) -> anyhow::Result<()> {
+pub fn run_ui(graph: HashMap<String, Rc<RefCell<dyn Node>>>) -> anyhow::Result<()> {
     let mut siv = cursive::default();
 
     let classified = Arc::new(classify_layers(&graph));
@@ -52,7 +53,7 @@ fn build_main_view(classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>)
     // Create the "Upper node" section
     let mut upper_select = SelectView::new()
         .on_submit(move |s, item: &str| {
-            show_category_details(s, item, Arc::clone(&classified_clone1));
+            show_category_details(s, item, Arc::clone(&classified_clone1), false);
         });
 
     for node in UPPER_NODES.iter() {
@@ -62,11 +63,11 @@ fn build_main_view(classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>)
     let classified_clone2 = Arc::clone(&classified);
     let mut dandling_select = SelectView::new()
         .on_submit(move |s, item: &String| {
-            show_category_details(s, item, Arc::clone(&classified_clone2));
+            show_category_details(s, item, Arc::clone(&classified_clone2), true);
         });
 
 
-    let main_node_types: HashSet<&str> = MAIN_NODES.iter().map(|node| node.node_type).collect();
+    let main_node_types: HashSet<&str> = UPPER_NODES.iter().map(|node| node.node_type).collect();
 
     let classified_clone2 = Arc::clone(&classified);
     let mut remaining_node_types: Vec<String> = classified_clone2.keys()
@@ -80,6 +81,15 @@ fn build_main_view(classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>)
         dandling_select.add_item(category.clone(), category.clone());
     }
 
+    // Create the "Missing node" section
+    let classified_clone3 = Arc::clone(&classified);
+    let missing_select = SelectView::new()
+        .item("Missing nodes", "MissingNode")
+        .on_submit(move |s, item: &str| {
+            show_category_details(s, item, Arc::clone(&classified_clone3), false);
+        });
+
+
     return LinearLayout::vertical()
         .child(Dialog::around(upper_select).title("Upper level nodes"))
         .child(Dialog::around(dandling_select).title("Dandling nodes"))
@@ -87,21 +97,20 @@ fn build_main_view(classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>)
 }
 
 
-fn show_category_details(s: &mut Cursive, category: &str, classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>) {
+fn show_category_details(s: &mut Cursive, category: &str, classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>, dandling: bool) {
     let mut nodes: Vec<Rc<RefCell<dyn Node>>> = match classified.get(category) {
         Some(vec) => {
-            match category {
-                "MissingNode" => vec.clone(),
-
-                _ => vec
+            if dandling {
+                vec
                 .iter()
                 .filter(|node_ref| {
                     let node = node_ref.borrow();
                     node.used_count() == 0
                 })
                 .cloned() //  .map(Rc::clone)
-                .collect(), 
-
+                .collect()
+            } else {
+                vec.clone()
             }
         }
         

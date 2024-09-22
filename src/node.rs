@@ -13,6 +13,7 @@ pub trait Node {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum NodeErr {
     Nope,
 }
