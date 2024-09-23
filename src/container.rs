@@ -117,10 +117,20 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
     for entry in fs::read_dir(&containers_path)? {
         let entry = entry?;
         let container_id = entry.file_name().to_string_lossy().into_owned();
+
+        let container_node = Rc::new(RefCell::new(ContainerNode {
+            container_id: container_id.clone(),
+            deps: Vec::new(),
+            rdeps: Vec::new(),
+            path: entry.path(),
+        }));
+
         let config_path = entry.path().join("config.v2.json");
         let config_content = fs::read_to_string(&config_path);
-        if let Err(error) = config_content {
-            println!("no config.v2.json for {} {}", config_path.to_str().unwrap_or_default(), error);
+
+        if let Err(_error) = config_content {
+          //  println!("no config.v2.json for {} {}", config_path.to_str().unwrap_or_default(), error);
+            graph.insert(format!("Container:{}", container_id), container_node);
             continue;
         }
         let config_content = config_content.unwrap();
@@ -129,13 +139,6 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
         match config {
             Ok(config) => {
                 let image_id = config["Image"].as_str().unwrap_or("").trim_start_matches("sha256:");
-
-                let container_node = Rc::new(RefCell::new(ContainerNode {
-                    container_id: container_id.clone(),
-                    deps: Vec::new(),
-                    rdeps: Vec::new(),
-                    path: entry.path(),
-                }));
     
                 // Add dependency on the image content
                 let image_content_id = format!("ImageContent:{}", image_id);
