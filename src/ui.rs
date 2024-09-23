@@ -1,9 +1,11 @@
-use std::collections::{ HashMap, HashSet };
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use cursive::Cursive;
-use cursive::views::{Dialog, SelectView, TextView, LinearLayout, ScrollView};
+use cursive::theme::{BaseColor, Color, Effect, Style};
 use cursive::traits::*;
+use cursive::utils::markup::StyledString;
+use cursive::views::{Dialog, SelectView, TextView, LinearLayout, ScrollView};
 use crate::node::Node;
 use crate::analysis::{classify_layers, remove_node};
 use std::sync::Arc;
@@ -27,7 +29,7 @@ static DANDLING_NODES: &[UiMainNode] = &[
     UiMainNode { desc: "ImageContent", node_type: "ImageContent" },
     UiMainNode { desc: "ImageLayer", node_type: "ImageLayer" },
     UiMainNode { desc: "Overlay2", node_type: "Overlay2" },
-    UiMainNode { desc: "Volumes", node_type: "Mount" },
+    UiMainNode { desc: "Mount", node_type: "Mount" },
 
     UiMainNode { desc: "Images", node_type: "ImageRepo" },
 ];
@@ -62,23 +64,12 @@ fn build_main_view(classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>)
 
     let classified_clone2 = Arc::clone(&classified);
     let mut dandling_select = SelectView::new()
-        .on_submit(move |s, item: &String| {
+        .on_submit(move |s, item: &str| {
             show_category_details(s, item, Arc::clone(&classified_clone2), true);
         });
 
-
-    let main_node_types: HashSet<&str> = UPPER_NODES.iter().map(|node| node.node_type).collect();
-
-    let classified_clone2 = Arc::clone(&classified);
-    let mut remaining_node_types: Vec<String> = classified_clone2.keys()
-        .filter(|node_type| !main_node_types.contains(node_type.as_str()))
-        .cloned()
-        .collect();
-
-    remaining_node_types.sort();
-
-    for category in remaining_node_types {
-        dandling_select.add_item(category.clone(), category.clone());
+    for node in DANDLING_NODES.iter() {
+        dandling_select.add_item(node.desc, node.node_type);
     }
 
     // Create the "Missing node" section
@@ -89,11 +80,25 @@ fn build_main_view(classified: Arc<HashMap<String, Vec<Rc<RefCell<dyn Node>>>>>)
             show_category_details(s, item, Arc::clone(&classified_clone3), false);
         });
 
-
     return LinearLayout::vertical()
-        .child(Dialog::around(upper_select).title("Upper level nodes"))
-        .child(Dialog::around(dandling_select).title("Dandling nodes"))
-        .child(Dialog::around(missing_select).title("Missing nodes"));
+        .child( TextView::new(StyledString::styled(
+            "Upper level nodes",
+            Style::from(Effect::Bold).combine(Effect::Underline).combine(Color::Dark(BaseColor::Red)),
+        )))
+        .child(upper_select)
+        .child(TextView::new("                                 "))
+        .child( TextView::new(StyledString::styled(
+            "Dandling nodes",
+            Style::from(Effect::Bold).combine(Effect::Underline).combine(Color::Dark(BaseColor::Red)),
+        )))
+        .child(dandling_select)
+        .child(TextView::new("                                 "))
+        .child( TextView::new(StyledString::styled(
+            "Missing nodes",
+            Style::from(Effect::Bold).combine(Effect::Underline).combine(Color::Dark(BaseColor::Red)),
+        )))
+        .child(missing_select)
+        .child(TextView::new("                                 "));
 }
 
 
@@ -135,20 +140,54 @@ fn show_category_details(s: &mut Cursive, category: &str, classified: Arc<HashMa
 }
 
 fn show_node_details(s: &mut Cursive, node_id: String) {
-    let graph = s.with_user_data(|graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>| {
-        graph.get(&node_id).cloned()
-    }).unwrap();
+    let node = s.with_user_data(|graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>| {
+        Rc::clone(graph.get(&node_id).unwrap())
+    });
 
-    if let Some(node) = graph {
+    if let Some(node) = node {
         let node = node.borrow();
         let details = format!(
-            "ID: {}\nUsed Count: {}\nDependencies: {}",
-            node.id(),
-            node.rdeps().len(),
-            node.deps().len()
+            "ID: {}",
+            node.id()
         );
 
-        s.add_layer(Dialog::around(TextView::new(details))
+        let mut dependencies_select = SelectView::new()
+        .on_submit(move |s, node_id: &str| {
+            let node_ref = s.with_user_data(|graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>| {
+                Rc::clone(graph.get(node_id).unwrap())
+            }).unwrap();
+            show_node_details(s, node_ref.borrow().id());
+        });
+        for dep_node in node.deps().iter() {
+            dependencies_select.add_item(dep_node.borrow().id(), dep_node.borrow().id());
+        }
+        let mut rdependencies_select = SelectView::new()
+        .on_submit(move |s, node_id: &str| {
+            let node_ref = s.with_user_data(|graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>| {
+                Rc::clone(graph.get(node_id).unwrap())
+            }).unwrap();
+            show_node_details(s, node_ref.borrow().id());
+        });
+        for rdep_node in node.rdeps().iter() {
+            rdependencies_select.add_item(rdep_node.borrow().id(), rdep_node.borrow().id());
+        }
+        let view = LinearLayout::vertical()
+            .child(TextView::new(details))
+            .child(TextView::new("                                 "))
+            .child( TextView::new(StyledString::styled(
+                format!("Dependencies ({})", node.deps().len()),
+                Style::from(Effect::Bold).combine(Effect::Underline).combine(Color::Dark(BaseColor::Red)),
+            )))
+            .child(dependencies_select)
+            .child(TextView::new("                                 "))
+            .child( TextView::new(StyledString::styled(
+                format!("Reverse dependencies ({})", node.rdeps().len()),
+                Style::from(Effect::Bold).combine(Effect::Underline).combine(Color::Dark(BaseColor::Red)),
+            )))
+            .child(rdependencies_select)
+            .child(TextView::new("                                 "));
+
+        s.add_layer(Dialog::around(view)
             .title("Node Details")
             .button("Back", |s| { s.pop_layer(); })
             .button("Delete", move |s| {
