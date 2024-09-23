@@ -35,10 +35,6 @@ impl Node for Overlay2Node {
         &mut self.rdeps
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn delete(&self) -> Result<()> {
         fs::remove_dir_all(&self.path).context("Failed to remove overlay2 directory")
     }

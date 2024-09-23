@@ -36,10 +36,6 @@ impl Node for ImageLayerNode {
         &mut self.rdeps
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn delete(&self) -> Result<()> {
         fs::remove_dir_all(&self.path).context("Failed to remove image layer directory")
     }
@@ -71,10 +67,6 @@ impl Node for ImageContentNode {
 
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
         &mut self.rdeps
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 
     fn delete(&self) -> Result<()> {
@@ -111,11 +103,6 @@ impl Node for DiffIdNode {
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
         &mut self.rdeps
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn delete(&self) -> Result<()> {
         Ok(()) // Repositories are not deleted directly
     }
@@ -146,10 +133,6 @@ impl Node for ImageRepoNode {
 
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
         &mut self.rdeps
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 
     fn delete(&self) -> Result<()> {

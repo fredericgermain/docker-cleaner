@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -8,7 +7,6 @@ pub trait Node {
     fn deps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>>;
     fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>>;
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>>;
-    fn as_any(&self) -> &dyn Any;
     fn delete(&self) -> anyhow::Result<()>;
 }
 
@@ -48,9 +46,6 @@ impl Node for MissingNode {
 
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
         &mut self.rdeps
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn delete(&self) -> anyhow::Result<()> {

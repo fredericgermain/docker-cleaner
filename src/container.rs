@@ -34,11 +34,6 @@ impl Node for ContainerNode {
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
         &mut self.rdeps
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn delete(&self) -> Result<()> {
         fs::remove_dir_all(&self.path).context("Failed to remove container directory")
     }
@@ -71,10 +66,6 @@ impl Node for MountNode {
 
     fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
         &mut self.rdeps
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 
     fn delete(&self) -> Result<()> {
