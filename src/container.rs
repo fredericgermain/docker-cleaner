@@ -90,11 +90,11 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
         }));
 
         // Add dependencies on mount layers
-        for layer_file in ["init-id", "mount-id"] {
-            let layer_path = mount_path.join(layer_file);
-            if layer_path.exists() {
-                let layer_id = fs::read_to_string(layer_path)?.trim().to_string();
-                let overlay_id = format!("Overlay2:{}", layer_id);
+        for overlay_file in ["init-id", "mount-id"] {
+            let overlay_path = mount_path.join(overlay_file);
+            if overlay_path.exists() {
+                let overlay_id = fs::read_to_string(overlay_path)?.trim().to_string();
+                let overlay_id = format!("Overlay2:{}", overlay_id);
                 if let Some(overlay_node) = graph.get(&overlay_id) {
                     mount_node.borrow_mut().deps_mut().push(Rc::clone(overlay_node));
                     overlay_node.borrow_mut().rdeps_mut().push(Rc::clone(&mount_node));
@@ -108,6 +108,27 @@ pub fn analyze_containers(base_path: &Path, graph: &mut HashMap<String, Rc<RefCe
                     }));
                     mount_node.borrow_mut().deps_mut().push(Rc::clone(&missing_node));
                     graph.insert(overlay_id, missing_node);
+                }
+            }
+        }
+        for layer_file in ["parent"] {
+            let layer_path = mount_path.join(layer_file);
+            if layer_path.exists() {
+                let layer_id = fs::read_to_string(layer_path)?.trim().to_string();
+                let layer_id = format!("ImageLayer:{}", &layer_id.trim_start_matches("sha256:"));
+                if let Some(layer_node) = graph.get(&layer_id) {
+                    mount_node.borrow_mut().deps_mut().push(Rc::clone(layer_node));
+                    layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&mount_node));
+                } else {
+                    let mut rdeps = Vec::new();
+                    rdeps.push(Rc::clone(&mount_node));
+                    let missing_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MissingNode {
+                        id: layer_id.clone(),
+                        deps: Vec::new(),
+                        rdeps,
+                    }));
+                    mount_node.borrow_mut().deps_mut().push(Rc::clone(&missing_node));
+                    graph.insert(layer_id, missing_node);
                 }
             }
         }

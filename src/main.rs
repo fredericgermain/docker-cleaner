@@ -29,7 +29,7 @@ fn main() -> anyhow::Result<()> {
 
     let graph = analysis::build_graph(&base_path)?;
     
-    ui::run_ui(graph)?;
+    ui::run_ui(graph, base_path)?;
 
     Ok(())
 }

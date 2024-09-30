@@ -5,19 +5,30 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use anyhow::{Result, Context};
 use serde_json::Value;
-use crate::node::{Node, MissingNode};
+use crate::node::{MissingNode, Node, StaticId};
+
+const LAYERDB_PATH: &str ="image/overlay2/layerdb/sha256";
+const IMAGEDB_PATH: &str ="image/overlay2/imagedb/content/sha256";
+const METADATA_DIFFID_PATH: &str = "image/overlay2/distribution/v2metadata-by-diffid/sha256";
+const DIGESTID_PATH: &str = "image/overlay2/distribution/diffid-by-digest/sha256";
 
 pub struct ImageLayerNode {
-    image_id: String,
+    layer_id: String,
  //   layer_id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
     rdeps: Vec<Rc<RefCell<dyn Node>>>,
-    path: PathBuf,
+    base_path: PathBuf,
+}
+
+impl StaticId for ImageLayerNode {
+    fn static_id(id: &str) -> String {
+        format!("ImageLayer:{}", id)
+    }
 }
 
 impl Node for ImageLayerNode {
     fn id(&self) -> String {
-        format!("ImageLayer:{}", self.image_id)
+        Self::static_id(&self.layer_id)
     }
 
     fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
@@ -37,20 +48,31 @@ impl Node for ImageLayerNode {
     }
 
     fn delete(&self) -> Result<()> {
-        fs::remove_dir_all(&self.path).context("Failed to remove image layer directory")
+        match fs::remove_dir_all(self.base_path.join(LAYERDB_PATH).join(&self.layer_id)).context("Failed to remove image layer directory") {
+            Ok(_) => {},
+            Err(e) => eprintln!("Failed to dir file: {}", e),
+        };
+        Ok(())
     }
 }
+
 
 pub struct ImageContentNode {
     image_id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
     rdeps: Vec<Rc<RefCell<dyn Node>>>,
-    path: PathBuf,
+    base_path: PathBuf,
+}
+
+impl StaticId for ImageContentNode {
+    fn static_id(id: &str) -> String {
+        format!("ImageContent:{}", id)
+    }
 }
 
 impl Node for ImageContentNode {
     fn id(&self) -> String {
-        format!("ImageContent:{}", self.image_id)
+        Self::static_id(&self.image_id)
     }
 
     fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
@@ -70,22 +92,27 @@ impl Node for ImageContentNode {
     }
 
     fn delete(&self) -> Result<()> {
-        fs::remove_file(&self.path).context("Failed to remove image content file")
+        match fs::remove_dir_all(self.base_path.join(IMAGEDB_PATH).join(&self.image_id)).context("Failed to remove image content file") {
+            Ok(_) => {},
+            Err(e) => eprintln!("Failed to dir file: {}", e),
+        };
+        Ok(())
     }
 }
 
 #[allow(dead_code)]
-pub struct DiffIdNode {
+pub struct MetadataDiffIdNode {
     id: String,
     deps: Vec<Rc<RefCell<dyn Node>>>,
     rdeps: Vec<Rc<RefCell<dyn Node>>>,
     digest: String,
     source_repository: Option<String>,
+    base_path: PathBuf,
 }
 
-impl Node for DiffIdNode {
+impl Node for MetadataDiffIdNode {
     fn id(&self) -> String {
-        format!("DiffId:{}", self.id)
+        Self::static_id(&self.id)
     }
 
     fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
@@ -104,9 +131,63 @@ impl Node for DiffIdNode {
         &mut self.rdeps
     }
     fn delete(&self) -> Result<()> {
-        Ok(()) // Repositories are not deleted directly
+        match fs::remove_file(self.base_path.join(METADATA_DIFFID_PATH).join(&self.id)) {
+            Ok(()) => {},
+            Err(e) => eprintln!("Failed to remove file: {}", e),
+        }
+        match fs::remove_file(self.base_path.join(DIGESTID_PATH).join(&self.digest)) {
+            Ok(()) => {},
+            Err(e) => eprintln!("Failed to remove file: {}", e),
+        }
+        Ok(())
     }
 }
+
+impl StaticId for MetadataDiffIdNode {
+    fn static_id(id: &str) -> String {
+        format!("MetadataDiffId:{}", id)
+    }
+}
+
+#[allow(dead_code)]
+pub struct LayerDiffIdNode {
+    id: String,
+    deps: Vec<Rc<RefCell<dyn Node>>>,
+    rdeps: Vec<Rc<RefCell<dyn Node>>>,
+    base_path: PathBuf,
+}
+
+impl StaticId for LayerDiffIdNode {
+    fn static_id(id: &str) -> String {
+        format!("LayerDiffId:{}", id)
+    }
+}
+
+impl Node for LayerDiffIdNode {
+    fn id(&self) -> String {
+        Self::static_id(&self.id)
+    }
+
+    fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.deps
+    }
+
+    fn deps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.deps
+    }
+
+    fn rdeps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
+        &self.rdeps
+    }
+
+    fn rdeps_mut(&mut self) -> &mut Vec<Rc<RefCell<dyn Node>>> {
+        &mut self.rdeps
+    }
+    fn delete(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 
 pub struct ImageRepoNode {
     name_tag: String,
@@ -114,9 +195,15 @@ pub struct ImageRepoNode {
     rdeps: Vec<Rc<RefCell<dyn Node>>>,
 }
 
+impl StaticId for ImageRepoNode {
+    fn static_id(id: &str) -> String {
+        format!("ImageRepo:{}", id)
+    }
+}
+
 impl Node for ImageRepoNode {
     fn id(&self) -> String {
-        format!("ImageRepo:{}", self.name_tag)
+        Self::static_id(&self.name_tag)
     }
 
     fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>> {
@@ -141,17 +228,15 @@ impl Node for ImageRepoNode {
 }
 
 pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>) -> Result<()> {
-    let layerdb_path = base_path.join("image/overlay2/layerdb/sha256");
-    let imagedb_path = base_path.join("image/overlay2/imagedb/content/sha256");
 
     // Analyse diff ID
-    let diffid_path = base_path.join("image/overlay2/distribution/v2metadata-by-diffid/sha256");
- // also /image/overlay2/distribution/diffid-by-digest/sha256/$MS
-
-    for entry in fs::read_dir(&diffid_path)? {
+    let diffid_fullpath = base_path.join(METADATA_DIFFID_PATH);
+ // also would need to check pending file in DIGESTID_PATH
+    for entry in fs::read_dir(&diffid_fullpath)? {
         let entry = entry?;
         let diff_id = entry.file_name().to_string_lossy().into_owned();
-        let content = fs::read_to_string(entry.path())?;
+        let file_path = entry.path();
+        let content = fs::read_to_string(&file_path)?;
         let json: Value = serde_json::from_str(&content)?;
 
         let diff_id_array = json.as_array().unwrap();
@@ -164,34 +249,37 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
         } */
         if let Some(sha_digest) = diff_id_array.get(0).unwrap().get("Digest") {
             let digest = sha_digest.as_str().unwrap_or_default().trim_start_matches("sha256:");
-            let image_layer_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(DiffIdNode {
+            let diff_id_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(MetadataDiffIdNode {
                 id: diff_id.clone(),
        //        layer_id: layer_id.clone(),
                 deps: Vec::new(),
                 rdeps: Vec::new(),
                 digest: digest.to_string(),
                 source_repository: Some(json["SourceRepository"].as_str().unwrap_or("").to_string()),
+                base_path: base_path.to_path_buf(),
             }));
-            let overlay2_id = format!("DiffId:{}", diff_id);
-            graph.insert(overlay2_id, image_layer_node);
+            let diff_id_node_id = diff_id_node.borrow().id();
+            graph.insert(diff_id_node_id, diff_id_node);
         }
     }
 
 
     // Analyze layer diff IDs
+    let layerdb_path = base_path.join(LAYERDB_PATH);
     for entry in fs::read_dir(&layerdb_path)? {
         let entry = entry?;
         let layer_id = entry.file_name().to_string_lossy().into_owned();
-        let cache_id_path = entry.path().join("cache-id");
-       
-        let cache_overlay_id = fs::read_to_string(cache_id_path)?.trim().to_string();
+
         let image_layer_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(ImageLayerNode {
-            image_id: layer_id.clone(),
+            layer_id: layer_id.clone(),
    //        layer_id: layer_id.clone(),
             deps: Vec::new(),
             rdeps: Vec::new(),
-            path: entry.path(),
+            base_path: base_path.to_path_buf(),
         }));
+
+        let cache_id_path = entry.path().join("cache-id");
+        let cache_overlay_id = fs::read_to_string(cache_id_path)?.trim().to_string();
         let overlay2_id = format!("Overlay2:{}", cache_overlay_id);
         match graph.get(&overlay2_id) {
             Some(node) => {
@@ -214,25 +302,57 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
         
         let diff_path = entry.path().join("diff");
         let diff_content = fs::read_to_string(diff_path)?;
-        let digest = diff_content.trim_start_matches("sha256:");
-        let diffid_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(DiffIdNode {
-            id: digest.to_string(),
+        let diff_id_id = diff_content.trim_start_matches("sha256:");
+        /*
+        let diff_id_node: Rc<RefCell<dyn Node>> = Rc::new(RefCell::new(LayerDiffIdNode {
+            id: diff_id_id.to_string(),
    //        layer_id: layer_id.clone(),
             deps: Vec::new(),
             rdeps: Vec::new(),
-            digest: digest.to_string(),
-            source_repository: None,
+            base_path: base_path.to_path_buf(),
         }));
-        let overlay2_id = format!("DiffId:{}", digest);
 
-        diffid_node.borrow_mut().deps_mut().push(Rc::clone(&image_layer_node));
-        image_layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&diffid_node));
+        let diff_id_node_id = diff_id_node.borrow().id();
+        diff_id_node.borrow_mut().deps_mut().push(Rc::clone(&image_layer_node));
+        image_layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&diff_id_node));
 
-        graph.insert(overlay2_id, diffid_node);
-        graph.insert(format!("ImageLayer:{}", layer_id), image_layer_node);
+        graph.insert(diff_id_node_id, diff_id_node);
+        */
+        graph.insert(LayerDiffIdNode::static_id(diff_id_id), Rc::clone(&image_layer_node));
+
+        let metadata_diff_id_node_id = format!("MetadataDiffId:{}", diff_id_id);
+        match graph.get(&metadata_diff_id_node_id) {
+            Some(metadata_diff_id_node) => {
+                image_layer_node.borrow_mut().deps_mut().push(Rc::clone(&metadata_diff_id_node));
+                metadata_diff_id_node.borrow_mut().rdeps_mut().push(Rc::clone(&image_layer_node));
+//                println!("found metadata_diff_id for ImageLayerNode {} {} in {}", &layer_id, &metadata_diff_id_node_id, METADATA_DIFFID_PATH);
+            }
+            None => {
+//                println!("no metadata_diff_id for ImageLayerNode {} {}", &layer_id, &metadata_diff_id_node_id);
+            }
+        }
+        graph.insert(ImageLayerNode::static_id(&layer_id), image_layer_node);
+    }
+    for entry in fs::read_dir(&layerdb_path)? {
+        let entry = entry?;
+        let layer_id = entry.file_name().to_string_lossy().into_owned();
+
+        let image_layer_node = graph.get(&ImageLayerNode::static_id(&layer_id)).unwrap();
+
+        let layer_parent_id_path = entry.path().join("parent");
+        if let Ok(layer_parent_id) = fs::read_to_string(layer_parent_id_path) {
+            let layer_parent_id = layer_parent_id.trim().to_string();
+            let layer_parent_id = layer_parent_id.trim_start_matches("sha256:");
+
+            let layer_parent_node = graph.get(&ImageLayerNode::static_id(&layer_parent_id)).unwrap();
+
+            layer_parent_node.borrow_mut().deps_mut().push(Rc::clone(&image_layer_node));
+            image_layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&layer_parent_node));
+        }
     }
 
     // Analyze image content
+    let imagedb_path = base_path.join(IMAGEDB_PATH);
     for entry in fs::read_dir(&imagedb_path)? {
         let entry = entry?;
         let image_id = entry.file_name().to_string_lossy().into_owned();
@@ -246,7 +366,7 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
                         image_id: image_id.clone(),
                         deps: Vec::new(),
                         rdeps: Vec::new(),
-                        path: entry.path(),
+                        base_path: base_path.to_path_buf(),
                     }));
                     for diff_id in diff_ids {
                         let layer_diff_id = diff_id.as_str().unwrap_or("").trim_start_matches("sha256:");

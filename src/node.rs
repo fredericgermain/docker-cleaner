@@ -1,6 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+pub trait StaticId {
+    fn static_id(id: &str) -> String;
+}
+
 pub trait Node {
     fn id(&self) -> String;
     fn deps(&self) -> &Vec<Rc<RefCell<dyn Node>>>;
