@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-and-package:
+    needs: create-release
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Get the version
+      id: get_version
+      run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/v}
+
+    - name: Update version in Cargo.toml
+      run: sed -i 's/version = "0.0.0"/version = "${{ steps.get_version.outputs.VERSION }}"/' Cargo.toml
+
+    - name: Update version in debian/changelog
+      run: |
+        sed -i '1s/docker-cleaner (0.0.0)/docker-cleaner (${{ steps.get_version.outputs.VERSION }})/' debian/changelog
+        sed -i "2i\n  * Release version ${{ steps.get_version.outputs.VERSION }}\n" debian/changelog
+
+    - name: Update version in rpm spec
+      run: sed -i 's/Version:        0.0.0/Version:        ${{ steps.get_version.outputs.VERSION }}/' rpm/docker-cleaner.spec
+
+    - name: Install cross-compilation tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+        cargo install cross
+
+    - name: Build
+      run: |
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          cargo build --release
+        else
+          cross build --target aarch64-unknown-linux-gnu --release
+        fi
+
+    - name: Run tests
+      run: |
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          cargo test --verbose
+        else
+          cross test --target aarch64-unknown-linux-gnu --verbose
+        fi
+
+    - name: Install dependencies for packaging
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y debhelper rust-all rpm
+
+    - name: Build Debian package
+      run: |
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          dpkg-buildpackage -us -uc -b
+        else
+          dpkg-buildpackage -us -uc -b -aarm64
+        fi
+        mkdir -p artifacts
+        mv ../*.deb artifacts/
+
+    - name: Build RPM package
+      run: |
+        mkdir -p ~/rpmbuild/{SOURCES,SPECS}
+        cp rpm/docker-cleaner.spec ~/rpmbuild/SPECS/
+        tar czf ~/rpmbuild/SOURCES/docker-cleaner-${{ steps.get_version.outputs.VERSION }}.tar.gz .
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          rpmbuild -ba ~/rpmbuild/SPECS/docker-cleaner.spec
+        else
+          rpmbuild --target aarch64 -ba ~/rpmbuild/SPECS/docker-cleaner.spec
+        fi
+        mkdir -p artifacts
+        mv ~/rpmbuild/RPMS/*/*.rpm artifacts/
+
+    - name: Create tar.bz2 archive
+      run: |
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          tar -cjvf artifacts/docker-cleaner-${{ steps.get_version.outputs.VERSION }}-x86_64.tar.bz2 -C target/release docker-cleaner
+        else
+          tar -cjvf artifacts/docker-cleaner-${{ steps.get_version.outputs.VERSION }}-aarch64.tar.bz2 -C target/aarch64-unknown-linux-gnu/release docker-cleaner
+        fi
+
+    - name: Upload Debian package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./artifacts/docker-cleaner_${{ steps.get_version.outputs.VERSION }}_${{ matrix.arch }}.deb
+        asset_name: docker-cleaner_${{ steps.get_version.outputs.VERSION }}_${{ matrix.arch }}.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+    - name: Upload RPM package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./artifacts/docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.arch }}.rpm
+        asset_name: docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.arch }}.rpm
+        asset_content_type: application/x-rpm
+
+    - name: Upload tar.bz2 archive
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./artifacts/docker-cleaner-${{ steps.get_version.outputs.VERSION }}-${{ matrix.arch }}.tar.bz2
+        asset_name: docker-cleaner-${{ steps.get_version.outputs.VERSION }}-${{ matrix.arch }}.tar.bz2
+        asset_content_type: application/x-bzip2
