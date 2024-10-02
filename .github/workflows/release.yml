@@ -16,9 +16,10 @@ jobs:
         include:
           - os: ubuntu-latest
             arch: x86_64
+            rpm_arch: x86_64
           - os: ubuntu-latest
-            arch: aarch64
-            runner: [self-hosted, linux, ARM64]
+            arch: arm64
+            rpm_arch: aarch64
     runs-on: ${{ matrix.arch == 'aarch64' && matrix.runner || matrix.os }}
     steps:
     - uses: actions/checkout@v3
@@ -35,7 +36,10 @@ jobs:
     - name: Install packaging tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y dpkg-dev rpm
+        sudo apt-get install -y dpkg-dev
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          sudo apt-get install -y rpm
+        fi
     
     - name: Get version from tag
       id: get_version
@@ -57,6 +61,7 @@ jobs:
         mv debian.deb docker-cleaner_${{ steps.get_version.outputs.VERSION }}_${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }}.deb
     
     - name: Prepare RPM package
+      if: matrix.arch == 'x86_64' # github runner rpmbuild does not support aarch64 yet
       run: |
         mkdir -p rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
         cp target/release/docker-cleaner rpm/SOURCES/
@@ -66,7 +71,7 @@ jobs:
         Release: 1
         Summary: A tool to clean Docker resources
         License: MIT
-        BuildArch: ${{ matrix.arch }}
+        BuildArch: ${{ matrix.rpm_arch }}
         
         %description
         A tool to clean Docker resources
@@ -78,64 +83,51 @@ jobs:
         %files
         /usr/bin/docker-cleaner
         EOF
-        rpmbuild -bb --target=${{ matrix.arch }} --define "_topdir $(pwd)/rpm" rpm/SPECS/docker-cleaner.spec
-        mv rpm/RPMS/*/*.rpm ./docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.arch }}.rpm
+        rpmbuild -bb --target=${{ matrix.rpm_arch }} --define "_topdir $(pwd)/rpm" rpm/SPECS/docker-cleaner.spec
+        mv rpm/RPMS/*/*.rpm ./docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.rpm_arch }}.rpm
     
     - name: Prepare tar.bz2 archive
       run: |
         tar -cjvf docker-cleaner-${{ steps.get_version.outputs.VERSION }}-${{ matrix.arch }}.tar.bz2 -C target/release docker-cleaner
     
+
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: packages-${{ matrix.arch }}
         path: |
           *.deb
           *.rpm
           *.tar.bz2
+        compression-level: 0  # No compression for binary files
 
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
     
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: false
-        prerelease: false
+      run: |
+        gh release create ${{ github.ref_name }} \
+          --title "Release ${{ github.ref_name }}" \
+          --generate-notes
     
     - name: Upload Release Assets
-      uses: actions/github-script@v6
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const fs = require('fs').promises;
-          const { repo: { owner, repo }, sha } = context;
-          
-          for (const dir of ['packages-x86_64', 'packages-aarch64']) {
-            const files = await fs.readdir(dir);
-            for (const file of files) {
-              const filePath = `${dir}/${file}`;
-              const stats = await fs.stat(filePath);
-              await github.rest.repos.uploadReleaseAsset({
-                owner,
-                repo,
-                release_id: ${{ steps.create_release.outputs.id }},
-                name: file,
-                data: await fs.readFile(filePath),
-                headers: {
-                  "content-type": "application/octet-stream",
-                  "content-length": stats.size
-                }
-              });
-            }
-          }
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        for dir in packages-*; do
+          for file in $dir/*; do
+            gh release upload ${{ github.ref_name }} "$file"
+          done
+        done
