@@ -760,3 +760,8 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "ncurses"
+version = "5.99.0"
+source = "git+https://github.com/vlisivka/ncurses-rs.git?branch=master#3cd730f983d8ca76c373eb7d8f7cf8322ffab6cb"
