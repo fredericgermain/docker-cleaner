@@ -149,7 +149,16 @@ fn show_category_details(s: &mut Cursive, category: &str, dandling: bool) {
 
     s.add_layer(Dialog::around(ScrollView::new(select))
         .title(format!("{} Details", category))
-        .button("Back", |s| { s.pop_layer(); }));
+        .button("Back", |s| { s.pop_layer(); })
+    /*
+        .button("Delete All", move |s| {
+            let result = s.with_user_data(|graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>| {
+                for node in &nodes {
+                    remove_node(graph, Rc::clone(&node), false);
+                }
+            });
+        }) */
+        );
 }
 
 fn show_node_details(s: &mut Cursive, node_id: String) {

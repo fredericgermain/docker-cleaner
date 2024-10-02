@@ -92,9 +92,14 @@ impl Node for ImageContentNode {
     }
 
     fn delete(&self) -> Result<()> {
-        match fs::remove_dir_all(self.base_path.join(IMAGEDB_PATH).join(&self.image_id)).context("Failed to remove image content file") {
+        let path = self.base_path.join(IMAGEDB_PATH).join(&self.image_id);
+
+        match fs::remove_file(&path).context(format!("Failed to remove image content file {}", &path.display())) {
             Ok(_) => {},
-            Err(e) => eprintln!("Failed to dir file: {}", e),
+            Err(e) => {
+                eprintln!("Failed to remove file: {}", e);
+                return Err(e);
+            }
         };
         Ok(())
     }
@@ -346,8 +351,8 @@ pub fn analyze_images(base_path: &Path, graph: &mut HashMap<String, Rc<RefCell<d
 
             let layer_parent_node = graph.get(&ImageLayerNode::static_id(&layer_parent_id)).unwrap();
 
-            layer_parent_node.borrow_mut().deps_mut().push(Rc::clone(&image_layer_node));
-            image_layer_node.borrow_mut().rdeps_mut().push(Rc::clone(&layer_parent_node));
+            layer_parent_node.borrow_mut().rdeps_mut().push(Rc::clone(&image_layer_node));
+            image_layer_node.borrow_mut().deps_mut().push(Rc::clone(&layer_parent_node));
         }
     }
 

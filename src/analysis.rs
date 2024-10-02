@@ -61,6 +61,7 @@ pub fn remove_node_list(graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>, node
 
 pub fn remove_node(graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>, node: Rc<RefCell<dyn Node>>, recursive: bool) -> Result<()> {
     if recursive {
+        // dfs, deletion on pre-order, to exit on 1st error, but only mess with a single branch in case of error
         let mut visited = HashSet::new();
         let mut stack = VecDeque::new();
 
@@ -90,8 +91,9 @@ pub fn remove_node(graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>, node: Rc<
                         }
                     }
                     node.borrow_mut().deps_mut().clear();                }
-                Err(_) => {
-                    eprintln!("error removing {}", &node.borrow().id())
+                Err(e) => {
+                    eprintln!("error removing {}", &node.borrow().id());
+                    return Err(e)
                 }
             }
         }
@@ -106,8 +108,9 @@ pub fn remove_node(graph: &mut HashMap<String, Rc<RefCell<dyn Node>>>, node: Rc<
                     rdep.borrow_mut().deps_mut().retain(|dep| !Rc::ptr_eq(dep, &node));
                 }
             }
-            Err(_) => {
-                eprintln!("error removing {}", &node.borrow().id())
+            Err(e) => {
+                eprintln!("error removing {}", &node.borrow().id());
+                return Err(e)
             }
         };
     }
