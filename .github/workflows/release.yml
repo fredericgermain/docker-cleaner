@@ -16,9 +16,10 @@ jobs:
         include:
           - os: ubuntu-latest
             arch: x86_64
+            rpm_arch: x86_64
           - os: ubuntu-latest
-            arch: aarch64
-            runner: [self-hosted, linux, ARM64]
+            arch: arm64
+            rpm_arch: aarch64
     runs-on: ${{ matrix.arch == 'aarch64' && matrix.runner || matrix.os }}
     steps:
     - uses: actions/checkout@v3
@@ -66,7 +67,7 @@ jobs:
         Release: 1
         Summary: A tool to clean Docker resources
         License: MIT
-        BuildArch: ${{ matrix.arch }}
+        BuildArch: ${{ matrix.rpm_arch }}
         
         %description
         A tool to clean Docker resources
@@ -78,21 +79,23 @@ jobs:
         %files
         /usr/bin/docker-cleaner
         EOF
-        rpmbuild -bb --target=${{ matrix.arch }} --define "_topdir $(pwd)/rpm" rpm/SPECS/docker-cleaner.spec
+        rpmbuild -bb --target=${{ matrix.rpm_arch }} --define "_topdir $(pwd)/rpm" rpm/SPECS/docker-cleaner.spec
         mv rpm/RPMS/*/*.rpm ./docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.arch }}.rpm
     
     - name: Prepare tar.bz2 archive
       run: |
         tar -cjvf docker-cleaner-${{ steps.get_version.outputs.VERSION }}-${{ matrix.arch }}.tar.bz2 -C target/release docker-cleaner
     
+
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: packages-${{ matrix.arch }}
         path: |
           *.deb
           *.rpm
           *.tar.bz2
+        compression-level: 0  # No compression for binary files
 
   release:
     name: Create Release
