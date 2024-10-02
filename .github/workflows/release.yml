@@ -11,10 +11,15 @@ env:
 jobs:
   build:
     name: Build and Package
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-latest
+            arch: aarch64
+            runner: [self-hosted, linux, ARM64]
+    runs-on: ${{ matrix.arch == 'aarch64' && matrix.runner || matrix.os }}
     steps:
     - uses: actions/checkout@v3
     
@@ -22,20 +27,14 @@ jobs:
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
-        target: ${{ matrix.target }}
         override: true
     
-    - name: Install cross-compilation tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu
-    
     - name: Build
-      run: |
-        cargo build --release --target ${{ matrix.target }}
+      run: cargo build --release
     
     - name: Install packaging tools
       run: |
+        sudo apt-get update
         sudo apt-get install -y dpkg-dev rpm
     
     - name: Get version from tag
@@ -46,28 +45,28 @@ jobs:
       run: |
         mkdir -p debian/DEBIAN
         mkdir -p debian/usr/bin
-        cp target/${{ matrix.target }}/release/docker-cleaner debian/usr/bin/
+        cp target/release/docker-cleaner debian/usr/bin/
         cat << EOF > debian/DEBIAN/control
         Package: docker-cleaner
         Version: ${{ steps.get_version.outputs.VERSION }}
-        Architecture: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'amd64' || 'arm64' }}
+        Architecture: ${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }}
         Maintainer: Your Name <your.email@example.com>
         Description: A tool to clean Docker resources
         EOF
         dpkg-deb --build debian
-        mv debian.deb docker-cleaner_${{ steps.get_version.outputs.VERSION }}_${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'amd64' || 'arm64' }}.deb
+        mv debian.deb docker-cleaner_${{ steps.get_version.outputs.VERSION }}_${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }}.deb
     
     - name: Prepare RPM package
       run: |
         mkdir -p rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-        cp target/${{ matrix.target }}/release/docker-cleaner rpm/SOURCES/
+        cp target/release/docker-cleaner rpm/SOURCES/
         cat << EOF > rpm/SPECS/docker-cleaner.spec
         Name: docker-cleaner
         Version: ${{ steps.get_version.outputs.VERSION }}
         Release: 1
         Summary: A tool to clean Docker resources
         License: MIT
-        BuildArch: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'x86_64' || 'aarch64' }}
+        BuildArch: ${{ matrix.arch }}
         
         %description
         A tool to clean Docker resources
@@ -79,17 +78,17 @@ jobs:
         %files
         /usr/bin/docker-cleaner
         EOF
-        rpmbuild -bb --target=${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'x86_64' || 'aarch64' }} --define "_topdir $(pwd)/rpm" rpm/SPECS/docker-cleaner.spec
-        mv rpm/RPMS/*/*.rpm ./docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'x86_64' || 'aarch64' }}.rpm
+        rpmbuild -bb --target=${{ matrix.arch }} --define "_topdir $(pwd)/rpm" rpm/SPECS/docker-cleaner.spec
+        mv rpm/RPMS/*/*.rpm ./docker-cleaner-${{ steps.get_version.outputs.VERSION }}-1.${{ matrix.arch }}.rpm
     
     - name: Prepare tar.bz2 archive
       run: |
-        tar -cjvf docker-cleaner-${{ steps.get_version.outputs.VERSION }}-${{ matrix.target }}.tar.bz2 -C target/${{ matrix.target }}/release docker-cleaner
+        tar -cjvf docker-cleaner-${{ steps.get_version.outputs.VERSION }}-${{ matrix.arch }}.tar.bz2 -C target/release docker-cleaner
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: packages-${{ matrix.target }}
+        name: packages-${{ matrix.arch }}
         path: |
           *.deb
           *.rpm
@@ -122,7 +121,7 @@ jobs:
           const fs = require('fs').promises;
           const { repo: { owner, repo }, sha } = context;
           
-          for (const dir of ['packages-x86_64-unknown-linux-gnu', 'packages-aarch64-unknown-linux-gnu']) {
+          for (const dir of ['packages-x86_64', 'packages-aarch64']) {
             const files = await fs.readdir(dir);
             for (const file of files) {
               const filePath = `${dir}/${file}`;
